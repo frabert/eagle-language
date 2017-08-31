@@ -98,7 +98,7 @@ module Parser =
                         | 'u', EOS, EOS -> preturn (BaseType "uint32", uint32 >> UInt32Literal)
                         | _, _, _ -> failFatally "Invalid integer suffix"
 
-                    varType >>= fun (t, f) -> preturn (t, f nl.String)
+                    varType |>> fun (t, f) -> (t, f nl.String)
                 else
                     let varType =
                         match nl.SuffixChar1, nl.SuffixChar2 with
@@ -107,7 +107,7 @@ module Parser =
                         | EOS, EOS -> preturn (BaseType "float64", float >> Float64Literal)
                         | _, _ -> failFatally "Invalid floating point suffix"
 
-                    varType >>= fun (t, f) -> preturn (t, f nl.String)
+                    varType |>> fun (t, f) -> (t, f nl.String)
 
     let pBoolExpr : ExpressionParser =
         choice [
@@ -138,7 +138,7 @@ module Parser =
 
         between (pstring "\"") (pstring "\"")
             (stringsSepBy normalCharSnippet escapedCharSnippet)
-            >>= fun s -> preturn (BaseType "string", StringLiteral s)
+            |>> fun s -> (BaseType "string", StringLiteral s)
 
     let pVariableExpr : ExpressionParser =
         ident >>= fun name ->
@@ -196,10 +196,12 @@ module Parser =
     type MaybeExpression =
         | Expr of EagleType * Expression
         | Error of Position * string
+
+    let inBraces (a : 'a) = between (pstr_ws "(") (pstr_ws ")") a
     
     let baseExpr =
         choice [
-            between (pstr_ws "(") (pstr_ws ")") expr
+            inBraces expr
             pITEExpr
             pBoolExpr
             pNumberExpr
@@ -210,7 +212,7 @@ module Parser =
 
     let pOperatorExpr : ExpressionParser =
         let opp = new OperatorPrecedenceParser<MaybeExpression, Position, _>()
-        let mexprParser = baseExpr >>= fun (t, ex) -> preturn (Expr (t, ex))
+        let mexprParser = baseExpr |>> Expr
         let opWrapper f =
             fun pos mexpr1 mexpr2 ->
                 match mexpr1, mexpr2 with
@@ -234,6 +236,13 @@ module Parser =
             opWrapper (fun pos (type1, expr1) (type2, expr2) ->
                 if not (isNumericType type1) || not (isNumericType type2) then
                     Error (pos, "Cannot operate on non-numerical values.")
+                else
+                    Expr (BaseType "bool", Binary (op, expr1, expr2)))
+
+        let equalityOperator op =
+            opWrapper (fun pos (type1, expr1) (type2, expr2) ->
+                if (type1 <> type2) && not ((canPromote type1 type2) || (canPromote type2 type1)) then
+                    Error (pos, "Expressions incomparable")
                 else
                     Expr (BaseType "bool", Binary (op, expr1, expr2)))
 
@@ -276,8 +285,8 @@ module Parser =
         opp.AddOperator(InfixOperator(">=", getPosition .>> ws, 4, Associativity.Right, (), comparisonOperator Ge))
         opp.AddOperator(InfixOperator("<", getPosition .>> ws, 4, Associativity.Right, (), comparisonOperator Lt))
         opp.AddOperator(InfixOperator("<=", getPosition .>> ws, 4, Associativity.Right, (), comparisonOperator Le))
-        opp.AddOperator(InfixOperator("==", getPosition .>> ws, 3, Associativity.Right, (), comparisonOperator Eq))
-        opp.AddOperator(InfixOperator("!=", getPosition .>> ws, 3, Associativity.Right, (), comparisonOperator NotEq))
+        opp.AddOperator(InfixOperator("==", getPosition .>> ws, 3, Associativity.Right, (), equalityOperator Eq))
+        opp.AddOperator(InfixOperator("!=", getPosition .>> ws, 3, Associativity.Right, (), equalityOperator NotEq))
         opp.AddOperator(InfixOperator("&&", getPosition .>> ws, 2, Associativity.Right, (), comparisonOperator And))
         opp.AddOperator(InfixOperator("||", getPosition .>> ws, 1, Associativity.Right, (), comparisonOperator Or))
         opp.TermParser <- mexprParser
@@ -288,6 +297,8 @@ module Parser =
                 fun stream ->
                     stream.Skip(p.Index - stream.Position.Index)
                     Reply(FatalError, messageError s)
+
+    let newScope (a : 'a) = pushScopeStream >>. a .>> popScopeStream
 
     let pVariableDecl : StatementParser =
         ((pstr_ws "var" >>. ident .>> pstr_ws "=") .>>. expr)
@@ -300,12 +311,23 @@ module Parser =
 
     let pWhile : StatementParser =
         let pCondition = pExpressionType (BaseType "bool") "While condition must be boolean." false
-        pstr_ws "while" >>. (between (pstr_ws "(") (pstr_ws ")") pCondition) .>> pushScopeStream .>>. stat
-        >>= fun (condition, body) -> preturn (While (condition, body)) .>> popScopeStream
+        pstr_ws "while" >>. (inBraces pCondition) .>>. newScope stat
+        |>> fun (condition, body) -> While (condition, body)
+
+    let pIf : StatementParser =
+        let pCondition = pExpressionType (BaseType "bool") "If conditiopn must be boolean." false
+        pstr_ws "if" >>. (inBraces pCondition) .>>. newScope stat
+        >>= fun (condition, body) ->
+            choice [
+                (pstr_ws "else") >>. pushScopeStream >>. stat |>> fun elseBody -> IfElse (condition, body, elseBody)
+                preturn (If (condition, body))
+            ]
 
     let pBlock : StatementParser =
-        pstr_ws "{" >>. pushScopeStream >>. many stat .>> pstr_ws "}" .>> popScopeStream
-        >>= (Block >> preturn)
+        pstr_ws "{" >>. (stat |> many |> newScope) .>> pstr_ws "}" .>> popScopeStream |>> Block
+
+    let pReturnStat : StatementParser =
+        pstr_ws "return" >>. expr |>> fun (t, exp) -> Return exp
 
     let pVariableAssign : StatementParser =
         (ident .>> pstr_ws "=" >>= fun name ->
@@ -316,7 +338,7 @@ module Parser =
                 | None -> Reply(FatalError, messageError ("Assignment to undefined variable: " + name)))
         >>= fun (name, t) ->
             (pExpressionType t "Invalid assignment type." true)
-            >>= fun expr -> preturn (Assignment (name, expr))
+            |>> fun expr -> Assignment (name, expr)
 
     do
         exprRef := (pOperatorExpr .>> ws) <?> "expression"
@@ -325,6 +347,8 @@ module Parser =
             (choice [
                 pVariableDecl
                 pWhile
+                pIf
                 pBlock
+                pReturnStat
                 pVariableAssign
             ] .>> ws) <?> "statement"
