@@ -7,7 +7,6 @@ module SyntaxElements =
         | Mul
         | Div
         | Mod
-        | Exp
         | Eq
         | NotEq
         | Gt
@@ -16,7 +15,6 @@ module SyntaxElements =
         | Le
         | And
         | Or
-        | Xor
 
     type UnaryOp =
         | Invert
@@ -41,6 +39,47 @@ module SyntaxElements =
         | ITE of Expression * Expression * Expression
         | Variable of string
         | ArrayAccess of Expression * Expression
+
+    let rec printExpression = function
+        | StringLiteral s -> sprintf "\"%s\"" s
+        | Int8Literal i -> sprintf "%iy" i
+        | Int16Literal i -> sprintf "%is" i 
+        | Int32Literal i -> sprintf "%il" i 
+        | Int64Literal i -> sprintf "%iL" i
+        | UInt8Literal i -> sprintf "%iuy" i
+        | UInt16Literal i -> sprintf "%ius" i 
+        | UInt32Literal i -> sprintf "%iul" i 
+        | UInt64Literal i -> sprintf "%iUL" i
+        | Float32Literal f -> sprintf "%ff" f
+        | Float64Literal f -> sprintf "%fd" f
+        | BooleanLiteral true -> sprintf "true"
+        | BooleanLiteral false -> sprintf "false"
+        | Binary (op, l, r) ->
+            let operator =
+                match op with
+                | Add -> "+"
+                | Sub -> "-"
+                | Mul -> "*"
+                | Div -> "/"
+                | Mod -> "%"
+                | Eq -> "=="
+                | NotEq -> "!="
+                | Gt -> ">"
+                | Lt -> "<"
+                | Ge -> ">="
+                | Le -> "<="
+                | And -> "&&"
+                | Or -> "||"
+            sprintf "(%s)%s(%s)" (printExpression l) operator (printExpression r)
+        | Unary (op, e) ->
+            let operator =
+                match op with
+                | Negate -> "!"
+                | Invert -> "-"
+            sprintf "%s(%s)" operator (printExpression e)
+        | Call (_, s, x::xs) -> ((sprintf "(%s)" (printExpression x)) + (List.fold (fun x -> printExpression >> sprintf "%s,(%s)" x) "" xs)) |> sprintf "%s(%s)" s
+        | ITE (c, i, e) -> sprintf "if (%s) then (%s) else (%s)" (printExpression c) (printExpression i) (printExpression e)
+        | Variable s -> s
 
     type Statement =
         | Skip
