@@ -1,0 +1,14 @@
+FSharp.Core
+FsUnit.xUnit
+Microsoft.NET.Test.Sdk
+Microsoft.TestPlatform.TestHost
+System.ValueTuple
+xunit
+xunit.abstractions
+xunit.assert
+xunit.core
+xunit.extensibility.core
+xunit.extensibility.execution
+xunit.runner.console
+xunit.runner.visualstudio
+fparsec
