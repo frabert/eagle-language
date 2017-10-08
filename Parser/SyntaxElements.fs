@@ -91,5 +91,7 @@ module SyntaxElements =
         | While of Expression * Statement
         | Block of Statement list
         | Return of Expression
+        | Assert of Expression
+        | MessageAssert of Expression * Expression
 
     
