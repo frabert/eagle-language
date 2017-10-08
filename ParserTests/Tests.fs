@@ -7,7 +7,8 @@ open Parser
 open SyntaxElements
 open Types
     
-module ``Expression parsing`` =
+[<AutoOpen>]
+module Utils =
     let (==>) a b =
         match a with
         | Success(res, state, pos) ->
@@ -31,7 +32,8 @@ module ``Expression parsing`` =
         match a with
         | Success _ -> failwith "Parsing succeded, expected failure"
         | Failure _ -> ()
-    
+
+module ``Expression parsing`` =
     let parseExpression s =
         let variables = Map [("foo", BaseType "string")
                              ("bar", BaseType "int64")
@@ -111,3 +113,44 @@ module ``Expression parsing`` =
         parseExpression "3+true" |> isInvalid
         parseExpression "3>true" |> isInvalid
         parseExpression "!(3+4)" |> isInvalid
+
+
+module ``Statement parsing`` =
+    let parseStatement s =
+        let variables = Map [("foo", BaseType "string")
+                             ("bar", BaseType "int64")
+                             ("foobar", BaseType "bool")]
+        let functions = Map [("boh", (BaseType "uint8", [BaseType "int32"; BaseType "int32"; BaseType "int32"]))]
+        let state = {emptyState with functions = functions}
+        runParserOnString stat (state, {emptyScope with variables = variables}) "" s
+
+    [<Fact>]
+    let ``Variable declaration parsing`` () =
+        parseStatement "var fubar = 3" ==> (VarAssignment ("fubar", Int32Literal 3))
+        parseStatement "var fubar = true" ==> (VarAssignment ("fubar", BooleanLiteral true))
+        parseStatement "var foo = true" |> isInvalid
+        parseStatement "var foo = \"hello\"" |> isInvalid
+
+    [<Fact>]
+    let ``Variable assignment parsing`` () =
+        parseStatement "foo = \"hello\"" ==> (Assignment ("foo", StringLiteral "hello"))
+        parseStatement "foo = true" |> isInvalid
+        
+    [<Fact>]
+    let ``While statement parsing`` () =
+        parseStatement "while (true) {}" ==> (While (BooleanLiteral true, Block []))
+        parseStatement "while (3) {}" |> isInvalid
+
+    [<Fact>]
+    let ``If statement parsing`` () =
+        parseStatement "if (true) {}" ==> (If (BooleanLiteral true, Block []))
+        parseStatement "if (3) {}" |> isInvalid
+        parseStatement "if (true) {} else {}" ==> (IfElse (BooleanLiteral true, Block [], Block []))
+        parseStatement "if (true) {} else if (false) {}" ==> (IfElse (BooleanLiteral true, Block [], If (BooleanLiteral false, Block [])))
+
+    [<Fact>]
+    let ``Return statement parsing`` () =
+        parseStatement "if (true) {}" ==> (If (BooleanLiteral true, Block []))
+        parseStatement "if (3) {}" |> isInvalid
+        parseStatement "if (true) {} else {}" ==> (IfElse (BooleanLiteral true, Block [], Block []))
+        parseStatement "if (true) {} else if (false) {}" ==> (IfElse (BooleanLiteral true, Block [], If (BooleanLiteral false, Block [])))

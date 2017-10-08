@@ -15,7 +15,7 @@ module Parser =
         types: Map<string, EagleType>;
         globals: Map<string, EagleType>;
         functions: Map<string, (EagleType * EagleType list)>;
-        procedures: Map<string, (EagleType * EagleType list)>
+        procedures: Map<string, (EagleType * EagleType list)>;
     }
 
     type ExpressionParser = Parser<(EagleType * Expression), (ParserGlobalState * VariableScope)>
@@ -298,16 +298,19 @@ module Parser =
                     stream.Skip(p.Index - stream.Position.Index)
                     Reply(FatalError, messageError s)
 
-    let newScope (a : 'a) = pushScopeStream >>. a .>> popScopeStream
+    let newScope (a : Parser<'a, (ParserGlobalState * VariableScope)>) = pushScopeStream >>. a .>> popScopeStream
 
     let pVariableDecl : StatementParser =
         ((pstr_ws "var" >>. ident .>> pstr_ws "=") .>>. expr)
         >>= fun (name, (t, expr)) ->
             fun stream ->
                 let (state, scope) = stream.UserState
-                let newState = (state, addVariable scope name t)
-                stream.UserState <- newState
-                Reply(VarAssignment (name, expr))
+                if (searchVariable state scope name) = None then
+                    let newState = (state, addVariable scope name t)
+                    stream.UserState <- newState
+                    Reply(VarAssignment (name, expr))
+                else
+                    Reply(FatalError, sprintf "Redefinition of existing variable '%s'." name |> messageError)
 
     let pWhile : StatementParser =
         let pCondition = pExpressionType (BaseType "bool") "While condition must be boolean." false
@@ -315,7 +318,7 @@ module Parser =
         |>> fun (condition, body) -> While (condition, body)
 
     let pIf : StatementParser =
-        let pCondition = pExpressionType (BaseType "bool") "If conditiopn must be boolean." false
+        let pCondition = pExpressionType (BaseType "bool") "If condition must be boolean." false
         pstr_ws "if" >>. (inBraces pCondition) .>>. newScope stat
         >>= fun (condition, body) ->
             choice [
@@ -340,6 +343,11 @@ module Parser =
             (pExpressionType t "Invalid assignment type." true)
             |>> fun expr -> Assignment (name, expr)
 
+    let pAssertStat : StatementParser =
+        let pCondition = pExpressionType (BaseType "bool") "Assertion condtion must be boolean" false
+        let pMessage = pExpressionType (BaseType "string") "Assertion message must be string" false
+        pstr_ws "assert" >>. ((pipe2 pCondition pMessage (fun a b -> MessageAssert (a,b))) <|> (pCondition |>> Assert))
+
     do
         exprRef := (pOperatorExpr .>> ws) <?> "expression"
 
@@ -351,4 +359,5 @@ module Parser =
                 pBlock
                 pReturnStat
                 pVariableAssign
+                pAssertStat
             ] .>> ws) <?> "statement"
